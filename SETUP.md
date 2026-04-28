@@ -2,6 +2,16 @@
 
 After creating a new repo from this template, run through this checklist before starting work.
 
+## 0. (First-time GitHub account only) Clear default $0 budgets
+
+GitHub creates new accounts with several **$0 budgets that have "Stop usage: Yes"** on Actions, Codespaces, Packages, Git LFS, and Premium SKUs. These block all workflow runs — even free-tier minutes — until removed.
+
+Go to https://github.com/settings/billing/budgets_and_alerts and delete every default $0 budget (the page should read "No budgets created"). Your overage **spending limit** (separate setting) stays at $0, so you still cannot be billed beyond your plan's free allowance.
+
+You only need to do this once per account. Skip if your Budgets page is already empty.
+
+> Heads up: brand-new GitHub accounts also have a silent Actions hold that can delay first workflow runs by several hours. If runs sit queued after budgets are clear, just wait.
+
 ## 1. Add the Anthropic API key
 
 ```bash
@@ -12,11 +22,9 @@ gh secret set ANTHROPIC_API_KEY --repo shmangopods/<this-repo>
 
 ## 2. Install the Claude GitHub App
 
-In a Claude Code session in this repo, run:
+Open https://github.com/apps/claude/installations/new in a browser → pick your account → choose "Only select repositories" → select this repo → Install.
 
-```
-/install-github-app
-```
+(The `/install-github-app` slash command in Claude Code opens this same flow if you'd rather start from there.)
 
 This connects the @claude bot to this repo so it can open PRs and post review comments.
 
