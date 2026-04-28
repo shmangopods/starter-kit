@@ -12,13 +12,23 @@ You only need to do this once per account. Skip if your Budgets page is already 
 
 > Heads up: brand-new GitHub accounts also have a silent Actions hold that can delay first workflow runs by several hours. If runs sit queued after budgets are clear, just wait.
 
-## 1. Add the Anthropic API key
+## 1. Add the Claude Code OAuth token
 
-```bash
-gh secret set ANTHROPIC_API_KEY --repo shmangopods/<this-repo>
+In an interactive Claude Code session (any directory), run:
+
+```
+/login
 ```
 
-(Paste the key when prompted. Get it from https://console.anthropic.com → API Keys.)
+…then choose **"Generate token for GitHub Actions"** (or run `claude setup-token` directly). Copy the token it prints.
+
+```bash
+gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo shmangopods/<this-repo>
+```
+
+Paste the token when prompted. Workflow runs will count against your Claude Pro/Max plan rather than billing the Anthropic API separately.
+
+> If you'd rather use a pay-as-you-go API key, replace `claude_code_oauth_token` with `anthropic_api_key` in each workflow file and store `ANTHROPIC_API_KEY` instead.
 
 ## 2. Install the Claude GitHub App
 
