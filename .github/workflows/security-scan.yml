@@ -1,0 +1,89 @@
+name: security-scan
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '0 8 * * 1'  # Mondays 08:00 UTC
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Native dependency audit
+        run: |
+          set -e
+          ran=0
+
+          if [ -f package.json ]; then
+            echo "::group::npm audit"
+            npm audit --audit-level=high || exit_code=$?
+            if [ "${exit_code:-0}" -ne 0 ]; then exit $exit_code; fi
+            echo "::endgroup::"
+            ran=1
+          fi
+
+          if [ -f pyproject.toml ] || [ -f requirements.txt ]; then
+            echo "::group::pip-audit"
+            python -m pip install --upgrade pip pip-audit
+            if [ -f requirements.txt ]; then
+              pip-audit -r requirements.txt
+            else
+              pip-audit
+            fi
+            echo "::endgroup::"
+            ran=1
+          fi
+
+          if [ -f Cargo.toml ]; then
+            echo "::group::cargo audit"
+            cargo install cargo-audit --locked
+            cargo audit
+            echo "::endgroup::"
+            ran=1
+          fi
+
+          if [ -f go.mod ]; then
+            echo "::group::govulncheck"
+            go install golang.org/x/vuln/cmd/govulncheck@latest
+            govulncheck ./...
+            echo "::endgroup::"
+            ran=1
+          fi
+
+          if [ "$ran" -eq 0 ]; then
+            echo "No recognized stack manifest. Skipping native audit."
+          fi
+
+  ai-scan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Security review
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_args: --max-turns 30
+          prompt: |
+            Invoke the `security-reviewer` subagent (defined at .claude/agents/security-reviewer.md).
+
+            Scope:
+            ${{ github.event_name == 'pull_request' && format('  - Review the diff for PR #{0} only.', github.event.pull_request.number) || '  - This is a scheduled or push run. Review the full repo for newly-introduced or previously-missed security risks.' }}
+
+            The reviewer outputs a BLOCKER / MAJOR / MINOR / NIT severity table with
+            file:line references and concrete attack vectors.
+
+            ${{ github.event_name == 'pull_request' && 'Post the findings as a single PR review comment.' || 'If any BLOCKERs or MAJORs are found, open a GitHub issue titled "Security scan: <date>" with the findings. If clean, do nothing.' }}
+
+            Do NOT modify code.
