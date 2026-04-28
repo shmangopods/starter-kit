@@ -30,6 +30,20 @@ Paste the token when prompted. Workflow runs will count against your Claude Pro/
 
 > If you'd rather use a pay-as-you-go API key, replace `claude_code_oauth_token` with `anthropic_api_key` in each workflow file and store `ANTHROPIC_API_KEY` instead.
 
+## 1b. (Recommended) Add an OpenAI fallback key
+
+Anthropic outages have happened. The kit ships a **fallback job** on `claude-pr-review` and `security-scan` that runs only when the Claude job fails — it calls OpenAI's API with the same prompt and posts the result as a PR comment. Without this secret, the fallback job will fail too.
+
+1. Create an OpenAI API key at https://platform.openai.com/api-keys
+2. Add a small balance ($5 covers ~50 reviews on `gpt-4o`)
+3. Set the secret:
+
+```bash
+gh secret set OPENAI_API_KEY --repo shmangopods/<this-repo>
+```
+
+The fallback uses `gpt-4o` by default — change `OPENAI_MODEL` in the workflow files if you prefer another model. Note: the `@claude` mention workflow has no fallback (it writes code, which a one-shot API call can't safely replicate).
+
 ## 2. Install the Claude GitHub App
 
 Open https://github.com/apps/claude/installations/new in a browser → pick your account → choose "Only select repositories" → select this repo → Install.

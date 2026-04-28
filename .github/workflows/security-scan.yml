@@ -120,3 +120,67 @@ jobs:
             ${{ github.event_name == 'pull_request' && 'The action will post your response as a PR comment automatically.' || 'If any BLOCKERs or MAJORs are found, open a GitHub issue titled "Security scan: <date>" with the findings using `gh issue create`. If clean, do nothing.' }}
 
             Do NOT modify code.
+
+  ai-scan-openai-fallback:
+    needs: ai-scan
+    if: failure() && github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Capture diff
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh pr diff ${{ github.event.pull_request.number }} --repo ${{ github.repository }} > /tmp/diff.txt
+
+      - name: Write prompt
+        run: |
+          cat > /tmp/prompt.md <<'PROMPT'
+          You are an adversarial security reviewer running as a fallback (the primary
+          Claude scanner was unavailable). Operate from "assume there is at least one
+          vulnerability" — if you find nothing, say so explicitly with reasoning.
+
+          Apply these lenses:
+          - Authn/authz — missing checks, broken access control, privilege escalation
+          - Secrets — hardcoded credentials, tokens, keys
+          - Injection — SQL, command, template, header, XSS
+          - Path traversal & SSRF — file paths/URLs from user input
+          - Insecure deserialization — pickle, eval, YAML.load
+          - Supply chain — suspicious deps, pinning gaps
+          - Crypto — weak hashes, ECB, hardcoded IVs, custom crypto
+          - Logging — sensitive data in logs, PII, tokens
+
+          For every finding: severity, file:line, concrete attack vector, remediation.
+
+          Severity rules: BLOCKER = exploitable today; MAJOR = significant risk;
+          MINOR = low-impact; NIT = hardening suggestion.
+
+          Output:
+
+          ## Security Review Verdict: <APPROVE | REQUEST_CHANGES | BLOCK>
+
+          ### Summary
+          <2-3 sentences>
+
+          ### Findings
+          | Severity | File:Line | Vulnerability | Attack Vector | Fix |
+          |----------|-----------|---------------|---------------|-----|
+
+          ### Clean lenses
+          <Lenses where you found nothing.>
+          PROMPT
+
+      - name: Run OpenAI fallback security scan
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: gpt-4o
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          PROMPT_FILE: /tmp/prompt.md
+          DIFF_FILE: /tmp/diff.txt
+          COMMENT_HEADER: "## OpenAI fallback security scan (Claude job failed)"
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 .github/scripts/openai-review.py
