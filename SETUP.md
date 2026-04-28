@@ -2,21 +2,53 @@
 
 After creating a new repo from this template, run through this checklist before starting work.
 
-## 1. Add the Anthropic API key
+## 0. (First-time GitHub account only) Clear default $0 budgets
 
-```bash
-gh secret set ANTHROPIC_API_KEY --repo shmangopods/<this-repo>
+GitHub creates new accounts with several **$0 budgets that have "Stop usage: Yes"** on Actions, Codespaces, Packages, Git LFS, and Premium SKUs. These block all workflow runs — even free-tier minutes — until removed.
+
+Go to https://github.com/settings/billing/budgets_and_alerts and delete every default $0 budget (the page should read "No budgets created"). Your overage **spending limit** (separate setting) stays at $0, so you still cannot be billed beyond your plan's free allowance.
+
+You only need to do this once per account. Skip if your Budgets page is already empty.
+
+> Heads up: brand-new GitHub accounts also have a silent Actions hold that can delay first workflow runs by several hours. If runs sit queued after budgets are clear, just wait.
+
+## 1. Add the Claude Code OAuth token
+
+In an interactive Claude Code session (any directory), run:
+
+```
+/login
 ```
 
-(Paste the key when prompted. Get it from https://console.anthropic.com → API Keys.)
+…then choose **"Generate token for GitHub Actions"** (or run `claude setup-token` directly). Copy the token it prints.
+
+```bash
+gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo shmangopods/<this-repo>
+```
+
+Paste the token when prompted. Workflow runs will count against your Claude Pro/Max plan rather than billing the Anthropic API separately.
+
+> If you'd rather use a pay-as-you-go API key, replace `claude_code_oauth_token` with `anthropic_api_key` in each workflow file and store `ANTHROPIC_API_KEY` instead.
+
+## 1b. (Recommended) Add an OpenAI fallback key
+
+Anthropic outages have happened. The kit ships a **fallback job** on `claude-pr-review` and `security-scan` that runs only when the Claude job fails — it calls OpenAI's API with the same prompt and posts the result as a PR comment. Without this secret, the fallback job will fail too.
+
+1. Create an OpenAI API key at https://platform.openai.com/api-keys
+2. Add a small balance ($5 covers ~50 reviews on `gpt-4o`)
+3. Set the secret:
+
+```bash
+gh secret set OPENAI_API_KEY --repo shmangopods/<this-repo>
+```
+
+The fallback uses `gpt-4o` by default — change `OPENAI_MODEL` in the workflow files if you prefer another model. Note: the `@claude` mention workflow has no fallback (it writes code, which a one-shot API call can't safely replicate).
 
 ## 2. Install the Claude GitHub App
 
-In a Claude Code session in this repo, run:
+Open https://github.com/apps/claude/installations/new in a browser → pick your account → choose "Only select repositories" → select this repo → Install.
 
-```
-/install-github-app
-```
+(The `/install-github-app` slash command in Claude Code opens this same flow if you'd rather start from there.)
 
 This connects the @claude bot to this repo so it can open PRs and post review comments.
 

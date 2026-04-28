@@ -18,27 +18,136 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Multi-agent review
+      - name: Multi-lens review
         uses: anthropics/claude-code-action@v1
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          claude_args: --max-turns 50
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          claude_args: --max-turns 30
+          use_sticky_comment: true
           prompt: |
-            You are reviewing PR #${{ github.event.pull_request.number }} in this repo.
+            Review PR #${{ github.event.pull_request.number }}.
 
-            Run all THREE reviewer subagents IN PARALLEL via the Agent tool — call them
-            in a single message with three separate Agent tool uses:
-              1. code-reviewer       (correctness, readability, idioms)
-              2. security-reviewer   (OWASP, auth, secrets, injection, supply chain)
-              3. architecture-reviewer (fit, coupling, lock-in, simpler alternatives)
+            Read the diff with `gh pr diff ${{ github.event.pull_request.number }}` and the
+            PR description with `gh pr view ${{ github.event.pull_request.number }}`.
 
-            Each reviewer's definition lives at .claude/agents/<name>.md and they output
-            a strict severity table (BLOCKER / MAJOR / MINOR / NIT) with a verdict
-            (APPROVE / REQUEST_CHANGES / BLOCK).
+            Apply THREE review lenses, in order, in the SAME response:
 
-            After all three return, post ONE consolidated PR review comment with:
-              - The strictest verdict across the three (BLOCK > REQUEST_CHANGES > APPROVE)
-              - A merged severity table grouped by reviewer
-              - A short "what to fix first" list (BLOCKERs and MAJORs only)
+            === Lens 1: Code quality ===
+            Naming, complexity, dead code, idiomaticity, error handling, tests for new
+            behavior, stale comments, duplication. Cite file:line. Skip security and
+            architecture (covered by other lenses).
+
+            === Lens 2: Security ===
+            OWASP categories. Authn/authz holes. Secrets in code. Injection (SQL, command,
+            template). Path traversal. SSRF. Insecure deserialization. Supply-chain risk
+            (suspicious deps). For each finding, cite file:line and the concrete attack
+            vector — not just "this is risky."
+
+            === Lens 3: Architecture ===
+            Fit (does this belong here?). Coupling (what new dependencies between modules?).
+            Lock-in (does this commit us to a path that's expensive to undo?). Simpler
+            alternatives that achieve the same goal. Bias toward "do less."
+
+            Operate from "assume there is at least one issue." If you genuinely find
+            nothing in a lens, say so explicitly with reasoning.
+
+            Output a SINGLE markdown PR comment with this exact structure:
+
+            ## Review Verdict: <APPROVE | REQUEST_CHANGES | BLOCK>
+
+            ### Summary
+            <2-3 sentences>
+
+            ### Findings
+            | Lens | Severity | File:Line | Issue | Suggested Fix |
+            |------|----------|-----------|-------|---------------|
+            | Code | BLOCKER | ... | ... | ... |
+            | Security | MAJOR | ... | ... | ... |
+            | Architecture | MINOR | ... | ... | ... |
+
+            ### What to fix first
+            <Bullet list of BLOCKERs and MAJORs only. Empty section if none.>
+
+            Severity rules:
+            - BLOCKER = bug, broken behavior, real vulnerability, cannot ship
+            - MAJOR = significant correctness/maintainability/security concern
+            - MINOR = real issue, low impact
+            - NIT = preference / polish
+
+            Verdict rules:
+            - Any BLOCKER → BLOCK
+            - 2+ MAJORs or 1 MAJOR without offsetting context → REQUEST_CHANGES
+            - All MINOR/NIT or clean → APPROVE
 
             Do NOT modify code. Do NOT push commits. Review only.
+
+  review-openai-fallback:
+    needs: review
+    if: failure() && github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Capture diff
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh pr diff ${{ github.event.pull_request.number }} --repo ${{ github.repository }} > /tmp/diff.txt
+
+      - name: Write prompt
+        run: |
+          cat > /tmp/prompt.md <<'PROMPT'
+          You are reviewing a GitHub pull request as a fallback reviewer (the primary
+          Claude reviewer was unavailable).
+
+          Apply THREE review lenses, in order, in the SAME response:
+
+          === Lens 1: Code quality ===
+          Naming, complexity, dead code, idiomaticity, error handling, tests for new
+          behavior, stale comments, duplication. Cite file:line. Skip security and
+          architecture (covered by other lenses).
+
+          === Lens 2: Security ===
+          OWASP categories. Authn/authz holes. Secrets in code. Injection (SQL, command,
+          template). Path traversal. SSRF. Insecure deserialization. Supply-chain risk.
+          For each finding, cite file:line and the concrete attack vector.
+
+          === Lens 3: Architecture ===
+          Fit, coupling, lock-in, simpler alternatives. Bias toward "do less."
+
+          Operate from "assume there is at least one issue." If you genuinely find
+          nothing in a lens, say so explicitly with reasoning.
+
+          Output a SINGLE markdown PR comment with this exact structure:
+
+          ## Review Verdict: <APPROVE | REQUEST_CHANGES | BLOCK>
+
+          ### Summary
+          <2-3 sentences>
+
+          ### Findings
+          | Lens | Severity | File:Line | Issue | Suggested Fix |
+          |------|----------|-----------|-------|---------------|
+
+          ### What to fix first
+          <Bullet list of BLOCKERs and MAJORs only. Empty section if none.>
+
+          Severity rules: BLOCKER = bug/vulnerability, can't ship; MAJOR = significant
+          concern; MINOR = real but low impact; NIT = polish.
+
+          Verdict rules: any BLOCKER → BLOCK; 2+ MAJORs → REQUEST_CHANGES; else APPROVE.
+          PROMPT
+
+      - name: Run OpenAI fallback review
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: gpt-4o
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          PROMPT_FILE: /tmp/prompt.md
+          DIFF_FILE: /tmp/diff.txt
+          COMMENT_HEADER: "## OpenAI fallback review (Claude job failed)"
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 .github/scripts/openai-review.py
