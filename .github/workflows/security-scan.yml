@@ -75,15 +75,48 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           claude_args: --max-turns 30
+          use_sticky_comment: true
           prompt: |
-            Invoke the `security-reviewer` subagent (defined at .claude/agents/security-reviewer.md).
+            You are an adversarial security reviewer. Operate from "assume there is at
+            least one vulnerability" — if you find nothing, say so explicitly with
+            reasoning.
 
             Scope:
-            ${{ github.event_name == 'pull_request' && format('  - Review the diff for PR #{0} only.', github.event.pull_request.number) || '  - This is a scheduled or push run. Review the full repo for newly-introduced or previously-missed security risks.' }}
+            ${{ github.event_name == 'pull_request' && format('  - Read the diff with `gh pr diff {0}`. Review only the PR diff.', github.event.pull_request.number) || '  - This is a scheduled or push run. Review the full repo for newly-introduced or previously-missed security risks.' }}
 
-            The reviewer outputs a BLOCKER / MAJOR / MINOR / NIT severity table with
-            file:line references and concrete attack vectors.
+            Apply these lenses:
+            - **Authn/authz** — missing checks, broken access control, privilege escalation paths
+            - **Secrets** — hardcoded credentials, tokens, keys committed to the repo or logs
+            - **Injection** — SQL, command, template, header, XSS — any place untrusted input flows into a sink
+            - **Path traversal & SSRF** — file paths, URLs constructed from user input
+            - **Insecure deserialization** — pickle, eval, YAML.load, etc.
+            - **Supply chain** — suspicious or unmaintained dependencies, version pinning gaps
+            - **Crypto** — weak hashes, ECB mode, hardcoded IVs, custom crypto
+            - **Logging** — sensitive data written to logs, including PII or tokens
 
-            ${{ github.event_name == 'pull_request' && 'Post the findings as a single PR review comment.' || 'If any BLOCKERs or MAJORs are found, open a GitHub issue titled "Security scan: <date>" with the findings. If clean, do nothing.' }}
+            For every finding give: severity, file:line, the concrete attack vector
+            (what an attacker would actually do), and a remediation.
+
+            Severity rules:
+            - BLOCKER = exploitable today, cannot ship
+            - MAJOR = significant risk, must fix before next release
+            - MINOR = real but low-impact (defense-in-depth gap)
+            - NIT = hardening suggestion
+
+            Output a SINGLE markdown response with this structure:
+
+            ## Security Review Verdict: <APPROVE | REQUEST_CHANGES | BLOCK>
+
+            ### Summary
+            <2-3 sentences>
+
+            ### Findings
+            | Severity | File:Line | Vulnerability | Attack Vector | Fix |
+            |----------|-----------|---------------|---------------|-----|
+
+            ### Clean lenses
+            <List the lenses where you genuinely found nothing — keeps the review honest.>
+
+            ${{ github.event_name == 'pull_request' && 'The action will post your response as a PR comment automatically.' || 'If any BLOCKERs or MAJORs are found, open a GitHub issue titled "Security scan: <date>" with the findings using `gh issue create`. If clean, do nothing.' }}
 
             Do NOT modify code.
