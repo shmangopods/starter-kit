@@ -1,0 +1,66 @@
+name: tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect stack and run tests
+        run: |
+          set -e
+          ran=0
+
+          if [ -f package.json ]; then
+            echo "::group::Node tests"
+            if [ -f package-lock.json ]; then
+              npm ci
+            elif [ -f pnpm-lock.yaml ]; then
+              npm i -g pnpm && pnpm install --frozen-lockfile
+            elif [ -f yarn.lock ]; then
+              npm i -g yarn && yarn install --frozen-lockfile
+            else
+              npm install
+            fi
+            npm test --if-present
+            echo "::endgroup::"
+            ran=1
+          fi
+
+          if [ -f pyproject.toml ] || [ -f requirements.txt ] || [ -f setup.py ]; then
+            echo "::group::Python tests"
+            python -m pip install --upgrade pip
+            if [ -f pyproject.toml ]; then pip install -e . || true; fi
+            if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+            pip install pytest
+            pytest -q || exit_code=$?
+            if [ "${exit_code:-0}" -ne 0 ] && [ "${exit_code:-0}" -ne 5 ]; then
+              # exit 5 = pytest "no tests collected" — treat as soft-pass
+              exit $exit_code
+            fi
+            echo "::endgroup::"
+            ran=1
+          fi
+
+          if [ -f go.mod ]; then
+            echo "::group::Go tests"
+            go test ./...
+            echo "::endgroup::"
+            ran=1
+          fi
+
+          if [ -f Cargo.toml ]; then
+            echo "::group::Rust tests"
+            cargo test
+            echo "::endgroup::"
+            ran=1
+          fi
+
+          if [ "$ran" -eq 0 ]; then
+            echo "No recognized stack manifest (package.json / pyproject.toml / go.mod / Cargo.toml). Skipping."
+          fi

@@ -1,0 +1,44 @@
+name: claude-pr-review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+jobs:
+  review:
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Multi-agent review
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_args: --max-turns 50
+          prompt: |
+            You are reviewing PR #${{ github.event.pull_request.number }} in this repo.
+
+            Run all THREE reviewer subagents IN PARALLEL via the Agent tool — call them
+            in a single message with three separate Agent tool uses:
+              1. code-reviewer       (correctness, readability, idioms)
+              2. security-reviewer   (OWASP, auth, secrets, injection, supply chain)
+              3. architecture-reviewer (fit, coupling, lock-in, simpler alternatives)
+
+            Each reviewer's definition lives at .claude/agents/<name>.md and they output
+            a strict severity table (BLOCKER / MAJOR / MINOR / NIT) with a verdict
+            (APPROVE / REQUEST_CHANGES / BLOCK).
+
+            After all three return, post ONE consolidated PR review comment with:
+              - The strictest verdict across the three (BLOCK > REQUEST_CHANGES > APPROVE)
+              - A merged severity table grouped by reviewer
+              - A short "what to fix first" list (BLOCKERs and MAJORs only)
+
+            Do NOT modify code. Do NOT push commits. Review only.
